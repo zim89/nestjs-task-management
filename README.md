@@ -1,98 +1,203 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# Task Management API
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+Учебный backend на [NestJS](https://nestjs.com): REST API для управления задачами с JWT-аутентификацией.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+Проект сделан по курсу **[NestJS Zero to Hero](https://www.udemy.com/course/nestjs-zero-to-hero/)** (Udemy, Ariel Weinberger).
 
-## Description
+## Стек
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+- NestJS 11, TypeScript, Express
+- PostgreSQL и TypeORM
+- Passport JWT и `@nestjs/jwt`
+- Argon2 для хеширования паролей
+- `class-validator` / `class-transformer`
+- `@nestjs/config` и Joi
+- [Bun](https://bun.sh)
 
-## Project setup
+## Основные фичи
 
-```bash
-$ yarn install
+То, что обычно разбирают в курсе и что реализовано в этом репозитории:
+
+- **Модульная архитектура.** `AuthModule` и `TasksModule` с контроллерами, сервисами и сущностями. Auth экспортирует JWT-стратегию и Passport, чтобы Tasks мог закрыть свои маршруты.
+- **Гварды.** Весь `TasksController` обёрнут в `@UseGuards(AuthGuard())` — без Bearer-токена запросы не проходят. Стратегия по умолчанию — JWT.
+- **JWT-стратегия.** `JwtStrategy` достаёт токен из `Authorization: Bearer`, проверяет подпись и кладёт пользователя в `request.user`.
+- **Кастомный декоратор.** `@GetUser()` читает пользователя из request и прокидывает его в хендлер — без ручного доступа к `req`.
+- **Интерсепторы.** Глобальный `TransformInterceptor` прогоняет ответы через `instanceToPlain`. У задачи поле `user` помечено `@Exclude()`, поэтому связь с пользователем в JSON не утекает.
+- **Валидация.** Глобальный `ValidationPipe` + DTO (`CreateTaskDto`, `AuthCredentialsDto`, `FilterTasksDto`, `UpdateTaskStatusDto`). Невалидное тело или query отсекается до сервиса.
+- **Конфиг по окружениям.** `ConfigModule` грузит `.env.stage.${STAGE}`, схема Joi требует `STAGE`, `DB_*` и `JWT_*`. Подключение TypeORM собирается через `ConfigService`.
+- **Логирование.** `Logger` в bootstrap (порт), verbose-логи в контроллере задач (кто создаёт / читает список), error + stack в сервисе при падении query builder.
+- **Исключения Nest.** `UnauthorizedException` при неверном логине, `ConflictException` при занятом username (Postgres `23505`), `NotFoundException` если задачи нет или она чужая, `InternalServerErrorException` на неожиданных ошибках БД.
+- **Связь user ↔ tasks.** Задача принадлежит пользователю (`ManyToOne` / `OneToMany`). Список, получение, смена статуса и удаление фильтруются по текущему user — чужие задачи не видны.
+- **Фильтрация через QueryBuilder.** `GET /tasks` принимает `status` и `search` (подстрока в title/description, без учёта регистра).
+- **Хеши паролей.** При signup пароль хешируется Argon2, при signin — `argon2.verify`.
+- **CORS.** Включён в `main.ts`, чтобы фронтенд с другого origin мог ходить в API.
+
+## Структура
+
+```
+src/
+├── main.ts                     # bootstrap, CORS, ValidationPipe, interceptor
+├── app.module.ts               # Config + TypeORM + модули
+├── config.schema.ts            # Joi: STAGE, DB_*, JWT_*
+├── transform.interceptor.ts    # instanceToPlain для ответов
+├── auth/
+│   ├── auth.module.ts
+│   ├── auth.controller.ts      # POST /auth/signup, /auth/signin
+│   ├── auth.service.ts
+│   ├── jwt.strategy.ts         # Bearer token → пользователь
+│   ├── users.repository.ts
+│   ├── user.entity.ts
+│   ├── get-user.decorator.ts
+│   └── dto/auth-credentials.dto.ts
+└── tasks/
+    ├── tasks.module.ts
+    ├── tasks.controller.ts     # CRUD /tasks (все эндпоинты под JWT)
+    ├── tasks.service.ts
+    ├── task.entity.ts          # OPEN | IN_PROGRESS | DONE
+    └── dto/
+        ├── create-task.dto.ts
+        ├── filter-tasks.dto.ts
+        └── update-task-status.dto.ts
 ```
 
-## Compile and run the project
+## Требования
+
+- [Bun](https://bun.sh) (или Node.js 20+)
+- PostgreSQL 14+
+
+## Локальный запуск
+
+### 1. PostgreSQL
+
+Нужна база `task-management` и пользователь, как в `.env.stage.dev`:
 
 ```bash
-# development
-$ yarn run start
-
-# watch mode
-$ yarn run start:dev
-
-# production mode
-$ yarn run start:prod
+createdb task-management
 ```
 
-## Run tests
+Либо Docker:
 
 ```bash
-# unit tests
-$ yarn run test
-
-# e2e tests
-$ yarn run test:e2e
-
-# test coverage
-$ yarn run test:cov
+docker run --name tm-postgres \
+  -e POSTGRES_USER=postgres \
+  -e POSTGRES_PASSWORD=postgres \
+  -e POSTGRES_DB=task-management \
+  -p 5432:5432 \
+  -d postgres:16
 ```
 
-## Deployment
+TypeORM поднимает схему сам (`synchronize: true`) — миграции не нужны.
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
+### 2. Переменные окружения
 
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+При `bun run start:dev` подставляется `STAGE=dev`, конфиг читается из `.env.stage.dev`.
+
+Ожидаемые ключи (см. `src/config.schema.ts`):
+
+```env
+DB_HOST=localhost
+DB_PORT=5432
+DB_USERNAME=postgres
+DB_PASSWORD=postgres
+DB_DATABASE=task-management
+
+JWT_SECRET=<случайная строка>
+JWT_EXPIRES_IN=3600
+```
+
+Порт сервера: `PORT` или **4000** по умолчанию.
+
+### 3. Установка и старт
 
 ```bash
-$ yarn install -g @nestjs/mau
-$ mau deploy
+bun install
+bun run start:dev
 ```
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+Сервер: `http://localhost:4000`.
 
-## Resources
+Другие скрипты:
 
-Check out a few resources that may come in handy when working with NestJS:
+- `bun run start` — без watch
+- `bun run start:debug` — debug + watch, `STAGE=dev`
+- `bun run build` / `bun run start:prod` — прод (`STAGE=prod`, нужен `.env.stage.prod`)
+- `bun run lint`
+- `bun run test` / `bun run test:e2e`
 
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
+## API
 
-## Support
+Базовый URL: `http://localhost:4000`.
 
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
+### Auth
 
-## Stay in touch
+- `POST /auth/signup` — регистрация
+- `POST /auth/signin` — логин, ответ `{ accessToken }`
 
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
+Тело:
 
-## License
+```json
+{
+  "username": "alice",
+  "password": "secret1"
+}
+```
 
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+- `username`: 4–20 символов
+- `password`: 6–32 символа
+
+```bash
+curl -X POST http://localhost:4000/auth/signup \
+  -H "Content-Type: application/json" \
+  -d '{"username":"alice","password":"secret1"}'
+
+curl -X POST http://localhost:4000/auth/signin \
+  -H "Content-Type: application/json" \
+  -d '{"username":"alice","password":"secret1"}'
+```
+
+Дальше: `Authorization: Bearer <accessToken>`.
+
+### Tasks
+
+Все маршруты требуют JWT.
+
+- `POST /tasks` — создать задачу (`status: OPEN`)
+- `GET /tasks` — список своих задач
+- `GET /tasks/:id` — одна задача
+- `PATCH /tasks/:id/status` — сменить статус
+- `DELETE /tasks/:id` — удалить
+
+Создание:
+
+```json
+{
+  "title": "Write README",
+  "description": "Document the NestJS course project"
+}
+```
+
+Статус: `OPEN` | `IN_PROGRESS` | `DONE`.
+
+Фильтры `GET /tasks`:
+
+- `status` — точное значение enum
+- `search` — подстрока в `title` или `description`
+
+```bash
+curl "http://localhost:4000/tasks?status=OPEN&search=readme" \
+  -H "Authorization: Bearer <token>"
+```
+
+```bash
+curl -X PATCH http://localhost:4000/tasks/<id>/status \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"status":"IN_PROGRESS"}'
+```
+
+## Заметки учебного проекта
+
+- `synchronize: true` удобно для курса, для продакшена нужны миграции.
+- `.env.stage.prod` в репозитории пустой — перед `start:prod` его нужно заполнить.
+- JWT-секрет в `.env.stage.dev` только для локальной разработки.
+- Курс: [NestJS Zero to Hero — Modern TypeScript Back-end Development](https://www.udemy.com/course/nestjs-zero-to-hero/).
